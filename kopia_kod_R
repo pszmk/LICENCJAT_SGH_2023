@@ -1,0 +1,129 @@
+#rm(list=ls())
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(ROCR)
+require(ggplot2)
+require(pROC); citation("pROC")
+require(randomForest)
+#install.packages('Cairo')
+#library('Cairo')
+#CairoWin()
+
+# wczytanie danych
+sp_data = read.csv2(file = "student_performance_data/extended_sp_data.csv", sep = ";")
+
+# jeszcze warto zrobic wersje z usunietymi outlierami
+#sp_data = subset(x = sp_data, select = -c(failures_nlevels))
+
+# zamiana binarnej zmiennej zależnej na factor dla algorytmu budujacego drzewo
+sp_data$"G3_bin" = as.factor(sp_data$"G3_bin")
+
+# eksploracja danych
+names(sp_data)
+str(sp_data)
+table(sp_data$"G3_bin")
+prop.table(table(sp_data$"G3_bin"))
+
+# podział zbioru danych na treningowy i testowy
+set.seed(42)
+train_indexes = createDataPartition(sp_data$"G3_bin", p = .75, list = FALSE)
+sp_data.train = sp_data[train_indexes,]
+sp_data.test = sp_data[-train_indexes,]
+
+
+# funkcja do wizualizacji drzewa
+visualize_tree = function(tree = NULL){
+  tree
+  plot(tree)
+  text(tree, pretty = TRUE)
+  rpart.plot(tree, under=FALSE, tweak=1.3, fallen.leaves = TRUE)
+}
+
+# KUBA - DRZEWA
+tree.0.1 = rpart(G3_bin ~ ., data=sp_data.train, method="class", control = list(maxdepth = 10))
+
+visualize_tree(tree.0.1)
+roc.0.1 = roc(response = sp_data.test$"G3_bin", predictor = as.vector(predict(tree.0.1, newdata = sp_data.test)[, "TRUE"]))
+auc.0.1 = auc(roc.0.1)
+
+# PRZEMEK - kilka innych
+k = 10; trainControl_params = trainControl(method = "cv", number = k)
+paramsGrid  = expand.grid(mtry = seq(from=2, to=10, by=1))
+random_forest.0.2 = train(y=sp_data.train$G3_bin, x=subset(sp_data.train, select = -G3_bin), method = "rf", trControl = trainControl_params, metric = "Kappa", tuneGrid = paramsGrid)
+plot(random_forest.0.2)
+
+roc.rf.0.2 = roc(response = sp_data.test$"G3_bin", predictor = as.vector(predict(random_forest.0.2$finalModel, newdata = sp_data.test, type = "prob")[, "TRUE"]))
+auc.rf.0.2 = auc(roc.rf.0.2)
+
+k = 5; trainControl_params = trainControl(method = "cv", number = k)
+paramsGrid  = expand.grid(lambda = 0.05, cp = c("bic"))
+logistic_regression.0.1 = train(G3_bin ~ failures_nlevels+age_nlevels+Fedu_nlevels+studytime+freetime+goout+Dalc_nlevels, data = sp_data.train, method = "plr",  metric = "Kappa")
+plot(logistic_regression.0.1)
+##
+model = glm(formula = G3_bin ~ failures_nlevels+age_nlevels+Fedu_nlevels+studytime+freetime+goout+Dalc_nlevels,
+            data = sp_data.train,
+            family = binomial(link='logit'))
+summary(model)
+summary(logistic_regression.0.1)
+##
+roc.lr.0.1 = roc(response = sp_data.test$"G3_bin", predictor = as.vector(predict(logistic_regression.0.1, newdata = sp_data.test, type = "prob")[,"TRUE"]))
+auc.lr.0.1 = auc(roc.lr.0.1)
+
+### ROC
+ggroc(list(decision_tree = roc.0.1, random_forest = roc.rf.0.2, logistic_regression = roc.lr.0.1), size=1)+
+  geom_abline(slope = 1, intercept = 1)+
+  theme_minimal()
+
+print(auc.0.1);print(auc.rf.0.2);print(auc.lr.0.1)
+
+### cumulated LIFT
+#preds[["decision_tree"] = 
+#preds[["random_forest"]] = as.vector(predict(random_forest.0.2, newdata = sp_data.test, type = "prob")[, "TRUE"])
+#preds[["logistic_regression"]] = as.vector(predict(logistic_regression.0.1, newdata = sp_data.test, type="prob")[, "TRUE"])
+
+apriori = sum(sp_data.test$"G3_bin"=="TRUE")/length(sp_data.test$"G3_bin")
+1/apriori
+
+lift_cumulated_decision_tree = get_lift_points(predictions = as.vector(predict(tree.0.1, newdata = sp_data.test)[, "TRUE"]), real_values = sp_data.test$"G3_bin", apriori = apriori, bins=20)
+lift_decision_tree = get_lift_points(predictions = as.vector(predict(tree.0.1, newdata = sp_data.test)[, "TRUE"]), real_values = sp_data.test$"G3_bin", apriori = apriori, bins=20, cumulated = FALSE)
+
+lift_cumulated_random_forest = get_lift_points(predictions = as.vector(predict(random_forest.0.2, newdata = sp_data.test, type="prob")[, "TRUE"]), real_values = sp_data.test$"G3_bin", apriori = apriori, bins=20)
+lift_random_forest = get_lift_points(predictions = as.vector(predict(random_forest.0.2, newdata = sp_data.test, type="prob")[, "TRUE"]), real_values = sp_data.test$"G3_bin", apriori = apriori, bins=20, cumulated = FALSE)
+
+lift_cumulated_logistic_regression = get_lift_points(predictions = as.vector(predict(logistic_regression.0.1, newdata = sp_data.test, type="prob")[, "TRUE"]), real_values = sp_data.test$"G3_bin", apriori = apriori, bins=20)
+lift_logistic_regression = get_lift_points(predictions = as.vector(predict(logistic_regression.0.1, newdata = sp_data.test, type = "prob")[, "TRUE"]), real_values = sp_data.test$"G3_bin", apriori = apriori, bins=20, cumulated = FALSE)
+
+ff=2
+print(c(lift_cumulated_decision_tree[ff,"os_y"],lift_cumulated_logistic_regression[ff,"os_y"], lift_cumulated_random_forest[ff,"os_y"]))
+
+ddd = data.frame(cdt_x = lift_cumulated_decision_tree$os_x, crf_x = lift_cumulated_random_forest$os_x, clr_x = lift_cumulated_logistic_regression$os_x,
+                 cdt_y = lift_cumulated_decision_tree$os_y, crf_y = lift_cumulated_random_forest$os_y, clr_y = lift_cumulated_logistic_regression$os_y)
+
+ddd = data.frame(cdt_x = lift_decision_tree$os_x, crf_x = lift_random_forest$os_x, clr_x = lift_logistic_regression$os_x,
+                 cdt_y = lift_decision_tree$os_y, crf_y = lift_random_forest$os_y, clr_y = lift_logistic_regression$os_y)
+
+
+ggplot(data = ddd, aes(x=cdt_x))+
+  xlim(0,1)+
+  ylim(0, 1/apriori)+
+  geom_line(aes(y=cdt_y, color="decision_tree"), linewidth=0.5, show.legend = TRUE)+
+  geom_line(aes(y=crf_y, color="random_forese"), linewidth=0.5, show.legend = TRUE)+
+  geom_line(aes(y=clr_y, color="logistic_regression"), linewidth=0.5, show.legend = TRUE)+
+  geom_hline(yintercept = 1/apriori, linewidth=0.3)+
+  geom_hline(yintercept = 1, linewidth=0.3)+
+  geom_vline(xintercept = apriori, linewidth=0.3)+
+  theme_minimal()+
+  labs(color="name")+
+  xlab("kwantyl")+
+  ylab("lift")
+
+### do oceny istotnosci zmiennych
+tree.0.1$variable.importance
+random_forest.0.2$finalModel$importance
+summary(logistic_regression.0.1)
+
+##############
+varImpPlot(random_forest.0.2$finalModel, pch = 19, main="Las losowy - istotność zmiennych")
+##############
+plot(random_forest.0.2$finalModel)
