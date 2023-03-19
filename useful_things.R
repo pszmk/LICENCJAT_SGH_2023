@@ -25,7 +25,7 @@ get_freq = function(data=NULL, resp_name=NULL, pred_name=NULL){
 get_freq_plot = function(data=NULL, resp_name=NULL, pred_name=NULL){
   d = get_freq(data = data, resp_name = resp_name, pred_name = pred_name)
   ggplot(data)+
-    geom_bar(aes(x=data[, pred_name], y=after_stat(count / sum(count))), color="black", fill="white", size=0.5, width=0.9)+
+    geom_bar(aes(x=data[, pred_name], y=after_stat(count / sum(count))), color="black", fill="white", linewidth=0.5, width=0.9)+
     scale_y_continuous(
       name = "Częstość klas zm zależnej",
       sec.axis = sec_axis(~.*1, name="Udział klasy 1 w klasie", labels = scales::percent),
